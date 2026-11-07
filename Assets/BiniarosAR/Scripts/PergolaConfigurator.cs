@@ -7,10 +7,10 @@ namespace BiniarosAR
     /// Assign columns/louvers/ZIP/LED groups after the ROMA hierarchy is mapped.
     public class PergolaConfigurator : MonoBehaviour
     {
-        public List<GameObject> columns = new();
-        public List<Transform> louverPivots = new();
-        public List<GameObject> zipScreens = new();
-        public List<Light> ledLights = new();
+        public List<GameObject> columns = new List<GameObject>();
+        public List<Transform> louverPivots = new List<Transform>();
+        public List<GameObject> zipScreens = new List<GameObject>();
+        public List<Light> ledLights = new List<Light>();
         public Renderer[] ralRenderers;
         public Vector3 louverAxis = Vector3.right;
 

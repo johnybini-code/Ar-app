@@ -45,9 +45,11 @@ namespace BiniarosAR
             if (mode != Mode.TabletSender) return;
             string json = JsonUtility.ToJson(state);
             byte[] bytes = Encoding.UTF8.GetBytes(json);
-            using UdpClient sender = new UdpClient();
-            sender.EnableBroadcast = true;
-            sender.Send(bytes, bytes.Length, new IPEndPoint(IPAddress.Broadcast, port));
+            using (UdpClient sender = new UdpClient())
+            {
+                sender.EnableBroadcast = true;
+                sender.Send(bytes, bytes.Length, new IPEndPoint(IPAddress.Broadcast, port));
+            }
         }
 
         void ReceiveLoop()

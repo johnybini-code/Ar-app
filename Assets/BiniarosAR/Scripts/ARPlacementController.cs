@@ -15,7 +15,7 @@ namespace BiniarosAR
         public Transform pergolaRoot;
         public bool hidePlanesAfterPlacement = true;
 
-        readonly List<ARRaycastHit> hits = new();
+        readonly List<ARRaycastHit> hits = new List<ARRaycastHit>();
         bool placed;
         float previousTwist;
 
