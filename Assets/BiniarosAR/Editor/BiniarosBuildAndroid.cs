@@ -17,6 +17,7 @@ namespace BiniarosAR.Editor
     public sealed class BiniarosPreBuild : IPreprocessBuildWithReport
     {
         public int callbackOrder { get { return -1000; } }
+
         public void OnPreprocessBuild(BuildReport report)
         {
             BiniarosBuildAndroid.SetupProject();
@@ -40,30 +41,52 @@ namespace BiniarosAR.Editor
             PlayerSettings.colorSpace = ColorSpace.Linear;
             PlayerSettings.defaultInterfaceOrientation = UIOrientation.AutoRotation;
 
-            ConfigureXR();
+            ConfigureXRIfAvailable();
             CreateScene();
+
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
             Debug.Log("BINIAROS AR setup complete.");
         }
 
-        static void ConfigureXR()
+        static void ConfigureXRIfAvailable()
         {
-            XRGeneralSettingsPerBuildTarget perTarget = XRGeneralSettingsPerBuildTarget.GetOrCreate();
-            if (!perTarget.HasSettingsForBuildTarget(BuildTargetGroup.Android))
-                perTarget.CreateDefaultSettingsForBuildTarget(BuildTargetGroup.Android);
-            if (!perTarget.HasManagerSettingsForBuildTarget(BuildTargetGroup.Android))
-                perTarget.CreateDefaultManagerSettingsForBuildTarget(BuildTargetGroup.Android);
+            // CI-safe setup:
+            // Do not use XRGeneralSettingsPerBuildTarget.GetOrCreate(), because that API
+            // is not available in every XR Management build used by Unity Cloud.
+            var generalSettings =
+                XRGeneralSettingsPerBuildTarget.XRGeneralSettingsForBuildTarget(BuildTargetGroup.Android);
 
-            var manager = perTarget.ManagerSettingsForBuildTarget(BuildTargetGroup.Android);
+            if (generalSettings == null)
+            {
+                Debug.LogWarning(
+                    "Android XR General Settings were not found in this cloud import. " +
+                    "Skipping editor-time ARCore loader assignment so the build can continue.");
+                return;
+            }
+
+            var manager = generalSettings.Manager;
             if (manager == null)
-                throw new Exception("Could not create XR Manager Settings for Android.");
+            {
+                Debug.LogWarning(
+                    "Android XR Manager Settings were not found. " +
+                    "Skipping editor-time ARCore loader assignment so the build can continue.");
+                return;
+            }
 
             manager.automaticLoading = true;
             manager.automaticRunning = true;
-            XRPackageMetadataStore.AssignLoader(manager, "UnityEngine.XR.ARCore.ARCoreLoader", BuildTargetGroup.Android);
+
+            bool assigned = XRPackageMetadataStore.AssignLoader(
+                manager,
+                "UnityEngine.XR.ARCore.ARCoreLoader",
+                BuildTargetGroup.Android);
+
+            if (!assigned)
+                Debug.LogWarning("ARCore loader could not be assigned automatically in CI.");
+
             EditorUtility.SetDirty(manager);
-            EditorUtility.SetDirty(perTarget);
+            EditorUtility.SetDirty(generalSettings);
         }
 
         static void CreateScene()
@@ -85,11 +108,14 @@ namespace BiniarosAR.Editor
 
             var cameraOffset = new GameObject("Camera Offset");
             cameraOffset.transform.SetParent(originGO.transform, false);
+
             var cameraGO = new GameObject("Main Camera");
             cameraGO.tag = "MainCamera";
             cameraGO.transform.SetParent(cameraOffset.transform, false);
+
             var cam = cameraGO.AddComponent<Camera>();
             cam.nearClipPlane = 0.05f;
+
             cameraGO.AddComponent<AudioListener>();
             cameraGO.AddComponent<ARCameraManager>();
             cameraGO.AddComponent<ARCameraBackground>();
@@ -101,9 +127,12 @@ namespace BiniarosAR.Editor
             GameObject pergola = TryLoadModel();
             if (pergola == null)
             {
-                Debug.LogWarning("GLB importer unavailable in this first build. Using accurate-size procedural ROMA fallback for AR placement test.");
+                Debug.LogWarning(
+                    "GLB importer unavailable in this first build. " +
+                    "Using accurate-size procedural ROMA fallback for AR placement test.");
                 pergola = CreateProceduralRoma();
             }
+
             pergola.name = "ROMA_AR_1_TO_1";
             pergola.transform.position = Vector3.zero;
             pergola.transform.rotation = Quaternion.identity;
@@ -111,6 +140,7 @@ namespace BiniarosAR.Editor
             pergola.SetActive(false);
 
             var managerGO = new GameObject("BINIAROS_AR_MANAGER");
+
             var placement = managerGO.AddComponent<BiniarosAR.ARPlacementController>();
             placement.raycastManager = raycast;
             placement.planeManager = planes;
@@ -122,13 +152,16 @@ namespace BiniarosAR.Editor
             ui.pergola = pergola.transform;
 
             EditorSceneManager.SaveScene(scene, ScenePath);
-            EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(ScenePath, true) };
+            EditorBuildSettings.scenes =
+                new[] { new EditorBuildSettingsScene(ScenePath, true) };
         }
 
         static GameObject TryLoadModel()
         {
             var asset = AssetDatabase.LoadAssetAtPath<GameObject>(ModelPath);
-            if (asset == null) return null;
+            if (asset == null)
+                return null;
+
             return PrefabUtility.InstantiatePrefab(asset) as GameObject;
         }
 
@@ -141,44 +174,85 @@ namespace BiniarosAR.Editor
             const float beamH = 0.20f;
 
             var root = new GameObject("ROMA_Procedural_Fallback");
+
             var mat = new Material(Shader.Find("Standard"));
             mat.name = "RAL7016";
             mat.color = new Color(0.18f, 0.19f, 0.20f, 1f);
 
-            AddBox(root.transform, "Column_FL", new Vector3(-width/2f + post/2f, height/2f, -depth/2f + post/2f), new Vector3(post, height, post), mat);
-            AddBox(root.transform, "Column_FR", new Vector3(width/2f - post/2f, height/2f, -depth/2f + post/2f), new Vector3(post, height, post), mat);
-            AddBox(root.transform, "Column_RL", new Vector3(-width/2f + post/2f, height/2f, depth/2f - post/2f), new Vector3(post, height, post), mat);
-            AddBox(root.transform, "Column_RR", new Vector3(width/2f - post/2f, height/2f, depth/2f - post/2f), new Vector3(post, height, post), mat);
+            AddBox(root.transform, "Column_FL",
+                new Vector3(-width / 2f + post / 2f, height / 2f, -depth / 2f + post / 2f),
+                new Vector3(post, height, post), mat);
 
-            float beamY = height - beamH/2f;
-            AddBox(root.transform, "Beam_Front", new Vector3(0, beamY, -depth/2f + post/2f), new Vector3(width, beamH, post), mat);
-            AddBox(root.transform, "Beam_Back", new Vector3(0, beamY, depth/2f - post/2f), new Vector3(width, beamH, post), mat);
-            AddBox(root.transform, "Beam_Left", new Vector3(-width/2f + post/2f, beamY, 0), new Vector3(post, beamH, depth), mat);
-            AddBox(root.transform, "Beam_Right", new Vector3(width/2f - post/2f, beamY, 0), new Vector3(post, beamH, depth), mat);
+            AddBox(root.transform, "Column_FR",
+                new Vector3(width / 2f - post / 2f, height / 2f, -depth / 2f + post / 2f),
+                new Vector3(post, height, post), mat);
+
+            AddBox(root.transform, "Column_RL",
+                new Vector3(-width / 2f + post / 2f, height / 2f, depth / 2f - post / 2f),
+                new Vector3(post, height, post), mat);
+
+            AddBox(root.transform, "Column_RR",
+                new Vector3(width / 2f - post / 2f, height / 2f, depth / 2f - post / 2f),
+                new Vector3(post, height, post), mat);
+
+            float beamY = height - beamH / 2f;
+
+            AddBox(root.transform, "Beam_Front",
+                new Vector3(0, beamY, -depth / 2f + post / 2f),
+                new Vector3(width, beamH, post), mat);
+
+            AddBox(root.transform, "Beam_Back",
+                new Vector3(0, beamY, depth / 2f - post / 2f),
+                new Vector3(width, beamH, post), mat);
+
+            AddBox(root.transform, "Beam_Left",
+                new Vector3(-width / 2f + post / 2f, beamY, 0),
+                new Vector3(post, beamH, depth), mat);
+
+            AddBox(root.transform, "Beam_Right",
+                new Vector3(width / 2f - post / 2f, beamY, 0),
+                new Vector3(post, beamH, depth), mat);
 
             int louverCount = 24;
             float usable = depth - 0.34f;
             float step = usable / louverCount;
             float louverY = height - beamH - 0.045f;
+
             for (int i = 0; i < louverCount; i++)
             {
-                float z = -usable/2f + step * (i + 0.5f);
-                AddBox(root.transform, "Louver_" + (i + 1).ToString("00"), new Vector3(0, louverY, z), new Vector3(width - 0.34f, 0.045f, step * 0.80f), mat);
+                float z = -usable / 2f + step * (i + 0.5f);
+
+                AddBox(
+                    root.transform,
+                    "Louver_" + (i + 1).ToString("00"),
+                    new Vector3(0, louverY, z),
+                    new Vector3(width - 0.34f, 0.045f, step * 0.80f),
+                    mat);
             }
+
             return root;
         }
 
-        static void AddBox(Transform parent, string name, Vector3 position, Vector3 scale, Material mat)
+        static void AddBox(
+            Transform parent,
+            string name,
+            Vector3 position,
+            Vector3 scale,
+            Material mat)
         {
             var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
             go.name = name;
             go.transform.SetParent(parent, false);
             go.transform.localPosition = position;
             go.transform.localScale = scale;
-            var r = go.GetComponent<Renderer>();
-            if (r != null) r.sharedMaterial = mat;
-            var c = go.GetComponent<Collider>();
-            if (c != null) UnityEngine.Object.DestroyImmediate(c);
+
+            var renderer = go.GetComponent<Renderer>();
+            if (renderer != null)
+                renderer.sharedMaterial = mat;
+
+            var collider = go.GetComponent<Collider>();
+            if (collider != null)
+                UnityEngine.Object.DestroyImmediate(collider);
         }
     }
 }
